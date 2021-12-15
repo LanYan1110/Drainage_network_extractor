@@ -10,7 +10,6 @@
 struct Raster {
   std::vector<int> pixels; // where everything is stored
   int max_x, max_y; // number of columns and rows
-  
   // Initialise a raster with x columns and y rows
   Raster(int x, int y) {
     max_x = x;
@@ -24,10 +23,9 @@ struct Raster {
         for (int i = 0; i < max_x; ++i) line[i] =pixels[i + current_line*max_y];
     }
 
-
     // Fill values of an entire row
   void add_scanline(const int *line) {
-    for (int i = 0; i < max_x -1; ++i) pixels.push_back(line[i]);
+    for (int i = 0; i < max_x; ++i) pixels.push_back(line[i]);
   }
   
   // Fill entire raster with zeros
@@ -101,11 +99,14 @@ void print_queue(std::priority_queue<RasterCell, std::deque<RasterCell>> q) {
     std::cout << '\n';
 }
 
-void process_points(int x, int y, std::priority_queue<RasterCell, std::deque<RasterCell>> priority_queue, Raster input_raster, Raster flow_direction, int scenario)
+void process_points(int x, int y, std::priority_queue<RasterCell, std::deque<RasterCell>> priority_queue, Raster input_raster, Raster flow_direction, int scenario, int nXSize, int nYSize)
 {
-    if (flow_direction(x,y) ==0) {
+    if ( x >= 0 and x<= nXSize and y >= 0 and y <= nYSize and flow_direction(x,y) ==0) {
         auto new_cell = RasterCell(x, y, input_raster(x,y), insertion_order());
         priority_queue.push(new_cell);
+        flow_direction(x, y) = scenario;
+    }
+    else if (x >= 0 and x<= nXSize and y >= 0 and y <= nYSize and flow_direction(x,y) == -1){
         flow_direction(x, y) = scenario;
     }
 }
@@ -114,12 +115,12 @@ int main(int argc, const char * argv[]) {
   // Open dataset
   GDALDataset  *input_dataset;
   GDALAllRegister();
-  input_dataset = (GDALDataset *)GDALOpen("S33W070.hgt", GA_ReadOnly);
+  input_dataset = (GDALDataset *)GDALOpen("N32W065.hgt", GA_ReadOnly);
   if (input_dataset == NULL) {
     std::cerr << "Couldn't open file" << std::endl;
     return 1;
   }
-  
+
   // Print dataset info
   double geo_transform[6];
   std::cout << "Driver: " << input_dataset->GetDriver()->GetDescription() << "/" << input_dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME) << std::endl;;
@@ -129,7 +130,7 @@ int main(int argc, const char * argv[]) {
     std::cout << "Origin = (" << geo_transform[0] << ", " << geo_transform[3] << ")" << std::endl;
     std::cout << "Pixel Size = (" << geo_transform[1] << ", " << geo_transform[5] << ")" << std::endl;
   }
-  
+
   // Print Band 1 info
   GDALRasterBand *input_band;
   int nBlockXSize, nBlockYSize;
@@ -142,7 +143,7 @@ int main(int argc, const char * argv[]) {
   adfMinMax[1] = input_band->GetMaximum(&bGotMax);
   if (!(bGotMin && bGotMax)) GDALComputeRasterMinMax((GDALRasterBandH)input_band, TRUE, adfMinMax);
   std::cout << "Min=" << adfMinMax[0] << " Max=" << adfMinMax[1] << std::endl;
-  
+
   // Read Band 1 line by line
   int nXSize = input_band->GetXSize();
   int nYSize = input_band->GetYSize();
@@ -164,73 +165,34 @@ int main(int argc, const char * argv[]) {
     std::priority_queue<RasterCell, std::deque<RasterCell>> priority_queue;
     for (int x=0; x < nXSize -1 ; x++){
         for (int y=0; y < nYSize -1 ; y++){
-            if (x == 0 || x == nXSize -1 || y == 0 || y == nYSize -1){
+            if (x == 0 || x == nXSize - 1|| y == 0 || y == nYSize - 1){
                 auto priority_cell = RasterCell(x, y, input_raster(x,y), insertion_order());
                 priority_queue.push(priority_cell);
+                flow_direction(x, y) = -1;
             }
         }
 
     }
     for (; !priority_queue.empty(); priority_queue.pop()){
         RasterCell c = priority_queue.top();
-        if (c.x == 0 and c.y ==0 ){
-            int x = c.x +1; int y = c.y +1; int scenario = 25;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-
-        else if ( c.x ==0 and c.y == nYSize ){
-            int x = c.x +1; int y = c.y -1; int scenario = 15;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-
-        else if (c.y ==0 and c.x == nXSize){
-            int x = c.x -1; int y = c.y +1; int scenario = 35;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-
-        else if ( c.y == nYSize and c.x == nXSize){
-            int x = c.x -1; int y = c.y -1; int scenario = 5;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-
-        else if (c.y ==0 and c.x != 0 and c.x != nXSize){
-            int x = c.x ; int y = c.y +1; int scenario = 20;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-
-        else if (c.x ==0 and c.y != 0 and c.y != nYSize){
-            int x = c.x +1; int y = c.y; int scenario = 30;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-        else if (c.y == nYSize and c.x != 0 and c.x != nXSize){
-            int x = c.x; int y = c.y -1; int scenario = 10;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-        else if (c.x == nXSize and c.y != 0 and c.y != nXSize){
-            int x = c.x -1; int y = c.y; int scenario = 40;
-            process_points(x, y, priority_queue, input_raster, flow_direction, scenario);
-        }
-
-        else
-        {
             int x_1 = c.x +1; int y_1 = c.y; int scenario_1 = 20;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_1);
+            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_1, nXSize, nYSize);
             int x_2 = c.x +1; int y_2 = c.y-1; int scenario_2 = 15;
-            process_points(x_2, y_2, priority_queue, input_raster, flow_direction, scenario_2);
+            process_points(x_2, y_2, priority_queue, input_raster, flow_direction, scenario_2, nXSize, nYSize);
             int x_3 = c.x; int y_3 = c.y-1; int scenario_3 = 10;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_3);
+            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_3, nXSize, nYSize);
             int x_4 = c.x -1; int y_4 = c.y-1; int scenario_4 = 5;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_4);
+            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_4, nXSize, nYSize);
             int x_5 = c.x -1; int y_5 = c.y; int scenario_5 = 40;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_5);
+            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_5, nXSize, nYSize);
             int x_6 = c.x +1; int y_6 = c.y-1; int scenario_6 = 35;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_6);
+            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_6, nXSize, nYSize);
             int x_7 = c.x; int y_7 = c.y+1; int scenario_7 = 30;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_7);
+            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_7, nXSize, nYSize);
             int x_8 = c.x +1; int y_8 = c.y+1; int scenario_8 = 25;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_8);
+            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_8, nXSize, nYSize);
         }
-    }
+
 
 //   Write flow direction
     std::string tiffname("test.tif");
