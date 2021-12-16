@@ -2,9 +2,10 @@
 #include <fstream>
 #include <queue>
 #include <cassert>
-
+#include <stack>
 #include "gdal_priv.h"
 #include "cpl_conv.h"
+#include <string>
 
 int insert_order = 0;
 // Storage and access of a raster of a given size
@@ -12,6 +13,7 @@ struct Raster {
     std::vector<int> pixels; // where everything is stored
     std::vector<int> is_in_lists;//initially 0, this cell is put in the search list then set to 1
     std::vector<int> is_processed;//initially 0, processed then set to 1
+
     int max_x, max_y; // number of columns and rows
 
     // Initialise a raster with x columns and y rows
@@ -31,6 +33,11 @@ struct Raster {
     void fill() {
         unsigned int total_pixels = max_x * max_y;
         for (int i = 0; i < total_pixels; ++i) pixels.push_back(0);
+    }
+
+    void fill_1() {
+        unsigned int total_pixels = max_x * max_y;
+        for (int i = 0; i < total_pixels; ++i) pixels.push_back(1);
     }
 
     void fillmarkers()
@@ -111,6 +118,30 @@ void neighbour_processing(Raster &input_raster, int x, int y, Raster &flow_direc
 
 }
 
+void write_file(GDALDataset *input_dataset, double geo_transform[6], int nXSize, int nYSize, std::string raster_name, Raster raster){
+    GDALDataset* geotiffDataset;
+    GDALDriver* driverGeotiff;
+    GDALRasterBand* geotiffBand;
+    input_dataset->GetGeoTransform(geo_transform);
+    std::string extension(".tif"), tiffname;
+    tiffname = (std::string)raster_name + extension;
+    driverGeotiff = GetGDALDriverManager()->GetDriverByName("GTiff");
+    geotiffDataset = driverGeotiff->Create(tiffname.c_str(), nXSize, nYSize, 1, GDT_Float32, NULL);
+    geotiffDataset->SetGeoTransform(geo_transform);
+    geotiffDataset->SetProjection(input_dataset->GetProjectionRef());
+    int* rowBuff = (int*)CPLMalloc(sizeof(float) * nXSize);
+    for (int row = 0; row < nYSize; row++)
+    {
+        for (int col = 0; col < nXSize; col++)
+        {
+            rowBuff[col] =raster(col, row);
+        }
+        geotiffDataset->GetRasterBand(1)->RasterIO(GF_Write, 0,row, nXSize, 1, rowBuff, nXSize, 1, GDT_Int32, 0, 0);
+    }
+    GDALClose(geotiffDataset);
+    GDALDestroyDriverManager();
+}
+
 int main(int argc, const char* argv[]) {
 
     // Open dataset
@@ -180,12 +211,12 @@ int main(int argc, const char* argv[]) {
         };
     };
     //now we have our initial priority queue, we begin to process it
+    std::stack<RasterCell> accumulation_stack;
     for (; !cells_to_process_flow.empty(); cells_to_process_flow.pop())
     {
         RasterCell c = cells_to_process_flow.top();
+        accumulation_stack.push(c);
         input_raster.is_processed[c.x * input_raster.max_x + c.y] = 1;
-        //get its neighbours
-        //if they are four corners
             neighbour_processing(input_raster, c.x - 1, c.y - 1, flow_direction, 25, cells_to_process_flow, nXSize, nYSize); //1
             neighbour_processing(input_raster, c.x, c.y - 1, flow_direction, 20, cells_to_process_flow, nXSize, nYSize);//2
             neighbour_processing(input_raster, c.x + 1, c.y - 1, flow_direction, 35, cells_to_process_flow, nXSize, nYSize);//3
@@ -195,37 +226,49 @@ int main(int argc, const char* argv[]) {
             neighbour_processing(input_raster, c.x, c.y + 1, flow_direction, 10, cells_to_process_flow, nXSize, nYSize); //7
             neighbour_processing(input_raster, c.x + 1, c.y + 1, flow_direction, 5, cells_to_process_flow, nXSize, nYSize); //8+
     }
+    std::string name = "flow_direction";
+    write_file(input_dataset, &geo_transform[6], nXSize, nYSize, name,  flow_direction);
 
-    GDALDataset* geotiffDataset;
-    GDALDriver* driverGeotiff;
-    GDALRasterBand* geotiffBand;
-    input_dataset->GetGeoTransform(geo_transform);
-    std::string extension(".tif"), tiffname;
-    tiffname = (std::string)"flow_direction_1" + extension;
-    driverGeotiff = GetGDALDriverManager()->GetDriverByName("GTiff");
-    geotiffDataset = driverGeotiff->Create(tiffname.c_str(), nXSize, nYSize, 1, GDT_Float32, NULL);
-    geotiffDataset->SetGeoTransform(geo_transform);
-    geotiffDataset->SetProjection(input_dataset->GetProjectionRef());
-    int* rowBuff = (int*)CPLMalloc(sizeof(float) * nXSize);
-    for (int row = 0; row < nYSize; row++)
-    {
-        for (int col = 0; col < nXSize; col++)
-        {
-            rowBuff[col] =flow_direction(col, row);
-        }
-        geotiffDataset->GetRasterBand(1)->RasterIO(GF_Write, 0,row, nXSize, 1, rowBuff, nXSize, 1, GDT_Int32, 0, 0);
-    }
-    GDALClose(input_dataset);
-    GDALClose(geotiffDataset);
-    GDALDestroyDriverManager();
+
     // Flow accumulation
     Raster flow_accumulation(input_raster.max_x, input_raster.max_y);
-    // to do
+    flow_accumulation.fill_1();
+    for (; !accumulation_stack.empty(); accumulation_stack.pop())
+    {
+        auto c = cells_to_process_flow.top();
+        if (c.x - 1 >= 0 and c.x - 1 < nXSize and c.y - 1 >= 0 and c.y - 1 < nYSize){
+            if (flow_direction(c.x - 1, c.x - 1) == 25) {
+                flow_accumulation(c.x, c.y) += flow_direction(c.x - 1, c.y - 1);
+            }
+        }
+//        if (c.x >= 0 and c.x < nXSize and c.y-1 >= 0 and c.y-1 < nYSize and flow_direction(c.x, c.y-1) == 20){
+//            flow_accumulation(c.x, c.y) += flow_direction(c.x, c.y-1);
+//        }
+//        if (c.x + 1 >= 0 and c.x + 1 < nXSize and c.y - 1 >= 0 and c.y - 1 < nYSize and flow_direction(c.x + 1, c.y - 1) == 35){
+//            flow_accumulation(c.x, c.y) += flow_direction(c.x + 1, c.y - 1);
+//        }
+//        if (c.x - 1 >= 0 and c.x - 1 < nXSize and c.y >= 0 and c.y < nYSize and flow_direction(c.x - 1, c.y) == 30){
+//            flow_accumulation(c.x, c.y) += flow_direction(c.x - 1, c.y);
+//        }
+//        if (c.x + 1 >= 0 and c.x + 1 < nXSize and c.y >= 0 and c.y < nYSize and flow_direction(c.x + 1, c.y) == 40){
+//            flow_accumulation(c.x, c.y) += flow_direction(c.x + 1, c.y);
+//        }
+//        if (c.x - 1 >= 0 and c.x - 1 < nXSize and c.y + 1 >= 0 and c.y + 1 < nYSize and flow_direction(c.x - 1, c.y + 1) == 15){
+//            flow_accumulation(c.x, c.y) += flow_direction(c.x - 1, c.y + 1);
+//        }
+//        if (c.x >= 0 and c.x < nXSize and c.y + 1 >= 0 and c.y + 1 < nYSize and flow_direction(c.x, c.y + 1) == 10){
+//            flow_accumulation(c.x, c.y) += flow_direction(c.x, c.y + 1);
+//        }
+//        if (c.x + 1 >= 0 and c.x + 1 < nXSize and c.y +1 >= 0 and c.y +1 < nYSize and flow_direction(c.x + 1, c.y + 1) == 5){
+//            flow_accumulation(c.x, c.y) += flow_direction(c.x + 1, c.y + 1);
+//        }
+    }
 
     // Write flow accumulation
     // to do
+    std::string name_1 = "flow_accumulation";
+    write_file(input_dataset, &geo_transform[6], nXSize, nYSize, name_1,  flow_direction);
 
-    // Close input dataset
-
+    GDALClose(input_dataset);
     return 0;
 }
