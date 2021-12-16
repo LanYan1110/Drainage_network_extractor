@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <queue>
 #include <cassert>
 
@@ -30,7 +31,6 @@ struct Raster {
     void fill() {
         unsigned int total_pixels = max_x * max_y;
         for (int i = 0; i < total_pixels; ++i) pixels.push_back(0);
-
     }
 
     void fillmarkers()
@@ -60,7 +60,6 @@ struct RasterCell {
     int x, y; // row and column of the cell
     int elevation;
     int insertion_order;
-
     // Defines a new link to a cell
     RasterCell(int x, int y, int elevation, int insertion_order) {
         this->x = x;
@@ -68,14 +67,21 @@ struct RasterCell {
         this->elevation = elevation;
         this->insertion_order = insertion_order;
     }
-
     // Define the order of the linked cells (to be used in a priority_queue)
     bool operator<(const RasterCell& other) const {
         // to do with statements like if (this->elevation > other.elevation) return false/true;
         if (this->elevation < other.elevation)
             return false;
-        else
+        else if (this->elevation > other.elevation)
             return true;
+        else if (this->elevation == other.elevation)
+        {
+            //(grid cells added earlier have higher precedence in case of equal elevation)
+            if (this->insertion_order < other.insertion_order)
+                return false;
+            else
+                return true;
+        }
     }
 };
 
@@ -89,7 +95,7 @@ std::ostream& operator<<(std::ostream& os, const RasterCell& c) {
 void neighbour_processing(Raster &input_raster, int x, int y, Raster &flow_direction, int fd_value, std::priority_queue<RasterCell, std::deque<RasterCell>> &cells_to_process_flow)
 {
     if ((input_raster.is_in_lists[(x + y * input_raster.max_x)] == 0)
-        && (input_raster.is_processed[(x + y * input_raster.max_x)] == 0))
+        && (flow_direction(x,y) == 0))
     {
         //add the neighbour into the prority queue
         RasterCell n(x, y, input_raster(x, y), insert_order++);
@@ -133,7 +139,6 @@ int main(int argc, const char* argv[]) {
     adfMinMax[1] = input_band->GetMaximum(&bGotMax);
     if (!(bGotMin && bGotMax)) GDALComputeRasterMinMax((GDALRasterBandH)input_band, TRUE, adfMinMax);
     std::cout << "Min=" << adfMinMax[0] << " Max=" << adfMinMax[1] << std::endl;
-
     // Read Band 1 line by line
     int nXSize = input_band->GetXSize();
     int nYSize = input_band->GetYSize();
@@ -165,7 +170,6 @@ int main(int argc, const char* argv[]) {
                 RasterCell c(i, j, input_raster(i, j), insert_order++);
                 cells_to_process_flow.push(c);
                 input_raster.is_in_lists[i + j * input_raster.max_x] = 1;
-
             }
         };
     };
@@ -208,6 +212,29 @@ int main(int argc, const char* argv[]) {
             neighbour_processing(input_raster, c.x + 1, c.y + 1, flow_direction, 5, cells_to_process_flow); //8
         }
 };
+
+    GDALDataset* geotiffDataset;
+    GDALDriver* driverGeotiff;
+    GDALRasterBand* geotiffBand; 
+    input_dataset->GetGeoTransform(geo_transform);
+    std::string extension(".tif"), tiffname;
+    tiffname = (std::string)"flow_direction" + extension;
+    driverGeotiff = GetGDALDriverManager()->GetDriverByName("GTiff");
+    geotiffDataset = driverGeotiff->Create(tiffname.c_str(), nXSize, nYSize, 1, GDT_Float32, NULL);
+    geotiffDataset->SetGeoTransform(geo_transform);
+    geotiffDataset->SetProjection(input_dataset->GetProjectionRef());
+    int* rowBuff = (int*)CPLMalloc(sizeof(float) * nXSize);
+    for (int row = 0; row < nYSize; row++)
+    {
+        for (int col = 0; col < nXSize; col++) 
+        {
+            rowBuff[col] =flow_direction(col, row);
+        }
+        geotiffDataset->GetRasterBand(1)->RasterIO(GF_Write, 0,row, nXSize, 1, rowBuff, nXSize, 1, GDT_Int32, 0, 0);
+    }
+    GDALClose(input_dataset);
+    GDALClose(geotiffDataset);
+    GDALDestroyDriverManager();
     // Flow accumulation
     Raster flow_accumulation(input_raster.max_x, input_raster.max_y);
     // to do
@@ -216,7 +243,6 @@ int main(int argc, const char* argv[]) {
     // to do
 
     // Close input dataset
-    GDALClose(input_dataset);
-
+    
     return 0;
 }
