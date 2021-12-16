@@ -2,235 +2,230 @@
 #include <fstream>
 #include <queue>
 #include <cassert>
+
 #include "gdal_priv.h"
 #include "cpl_conv.h"
-#include <algorithm>
 
+int insert_order = 0;
 // Storage and access of a raster of a given size
 struct Raster {
-  std::vector<int> pixels; // where everything is stored
-  int max_x, max_y; // number of columns and rows
-  // Initialise a raster with x columns and y rows
-  Raster(int x, int y) {
-    max_x = x;
-    max_y = y;
-    unsigned int total_pixels = x*y;
-    pixels.reserve(total_pixels);
-  }
+    std::vector<int> pixels; // where everything is stored
+    std::vector<int> is_in_lists;//initially 0, this cell is put in the search list then set to 1
+    std::vector<int> is_processed;//initially 0, processed then set to 1
+    int max_x, max_y; // number of columns and rows
 
-    void output_direction(int& current_line, unsigned int* line)
-    {
-        for (int i = 0; i < max_x; ++i) line[i] =pixels[i + current_line*max_y];
+    // Initialise a raster with x columns and y rows
+    Raster(int x, int y) {
+        max_x = x;
+        max_y = y;
+        unsigned int total_pixels = x * y;
+        pixels.reserve(total_pixels);
     }
 
     // Fill values of an entire row
-  void add_scanline(const int *line) {
-    for (int i = 0; i < max_x; ++i) pixels.push_back(line[i]);
-  }
-  
-  // Fill entire raster with zeros
-  void fill() {
-    unsigned int total_pixels = max_x*max_y;
-    for (int i = 0; i < total_pixels; ++i) pixels.push_back(0);
-  }
-  
-  // Access the value of a raster cell to read or write it
-  int &operator()(int x, int y) {
-    assert(x >= 0 && x < max_x);
-    assert(y >= 0 && y < max_y);
-    return pixels[x + y*max_x];
-  }
-  
-  // Access the value of a raster cell to read it
-  int operator()(int x, int y) const {
-    assert(x >= 0 && x < max_x);
-    assert(y >= 0 && y < max_y);
-    return pixels[x + y*max_x];
-  }
-};
+    void add_scanline(const int* line) {
+        for (int i = 0; i < max_x; ++i) pixels.push_back(line[i]);
+    }
 
+    // Fill entire raster with zeros
+    void fill() {
+        unsigned int total_pixels = max_x * max_y;
+        for (int i = 0; i < total_pixels; ++i) pixels.push_back(0);
+    }
+
+    void fillmarkers()
+    {
+        unsigned int total_pixels = max_x * max_y;
+        for (int i = 0; i < total_pixels; ++i) is_in_lists.push_back(0);
+        for (int i = 0; i < total_pixels; ++i) is_processed.push_back(0);
+    }
+
+    // Access the value of a raster cell to read or write it
+    int& operator()(int x, int y) {
+        assert(x >= 0 && x < max_x);
+        assert(y >= 0 && y < max_y);
+        return pixels[x + y * max_x];
+    }
+
+    // Access the value of a raster cell to read it
+    int operator()(int x, int y) const {
+        assert(x >= 0 && x < max_x);
+        assert(y >= 0 && y < max_y);
+        return pixels[x + y * max_x];
+    }
+};
 
 // A structure that links to a single cell in a Raster
 struct RasterCell {
-  int x, y; // row and column of the cell
-  int elevation;
-  int insertion_order;
-  
-  // Defines a new link to a cell
-  RasterCell(int x, int y, int elevation, int insertion_order) {
-    this->x = x;
-    this->y = y;
-    this->elevation = elevation;
-    this->insertion_order = insertion_order;
-  }
-  
-  // Define the order of the linked cells (to be used in a priority_queue)
-  bool operator<(const RasterCell &other) const {
-      if (this->elevation > other.elevation) {
-          return true;
-      }
-      else if (this->elevation == other.elevation) {
-          if (this->insertion_order < other.elevation)
-              return true;
-          else
-              return false;
-      }
-      else
-        return false;
-  }
+    int x, y; // row and column of the cell
+    int elevation;
+    int insertion_order;
+    // Defines a new link to a cell
+    RasterCell(int x, int y, int elevation, int insertion_order) {
+        this->x = x;
+        this->y = y;
+        this->elevation = elevation;
+        this->insertion_order = insertion_order;
+    }
+    // Define the order of the linked cells (to be used in a priority_queue)
+    bool operator<(const RasterCell& other) const {
+        // to do with statements like if (this->elevation > other.elevation) return false/true;
+        if (this->elevation < other.elevation)
+            return false;
+        else if (this->elevation > other.elevation)
+            return true;
+        else if (this->elevation == other.elevation)
+        {
+            //(grid cells added earlier have higher precedence in case of equal elevation)
+            if (this->insertion_order < other.insertion_order)
+                return false;
+            else
+                return true;
+        }
+    }
 };
 
 // Write the values in a linked raster cell (useful for debugging)
 std::ostream& operator<<(std::ostream& os, const RasterCell& c) {
-  os << "{h=" << c.elevation << ", o=" << c.insertion_order << ", x=" << c.x << ", y=" << c.y << "}";
-  return os;
+    os << "{h=" << c.elevation << ", o=" << c.insertion_order << ", x=" << c.x << ", y=" << c.y << "}";
+    return os;
 }
 
-int insertion_order(){
-        static int counter = 0;
-        return ++counter;
-}
-
-void print_queue(std::priority_queue<RasterCell, std::deque<RasterCell>> q) {
-    while (!q.empty()) {
-        std::cout << q.top() << ' ';
-        q.pop();
-    }
-    std::cout << '\n';
-}
-
-void process_points(int x, int y, std::priority_queue<RasterCell, std::deque<RasterCell>> priority_queue, Raster input_raster, Raster flow_direction, int scenario, int nXSize, int nYSize)
+//process neighbours that are not yet in the search list and not yet processed
+void neighbour_processing(Raster &input_raster, int x, int y, Raster &flow_direction, int fd_value, std::priority_queue<RasterCell, std::deque<RasterCell>> &cells_to_process_flow, int nXSize, int nYSize)
 {
-    if ( x >= 0 and x<= nXSize and y >= 0 and y <= nYSize and flow_direction(x,y) ==0) {
-        auto new_cell = RasterCell(x, y, input_raster(x,y), insertion_order());
-        priority_queue.push(new_cell);
-        flow_direction(x, y) = scenario;
+    if (( x >= 0 and x< nXSize and y >= 0 and y < nYSize and input_raster.is_in_lists[(x + y * input_raster.max_x)] == 0)
+        and (flow_direction(x,y) == 0))
+    {
+        //add the neighbour into the prority queue
+        RasterCell n(x, y, input_raster(x, y), insert_order++);
+        cells_to_process_flow.push(n);
+        input_raster.is_in_lists[(x + y * input_raster.max_x)] = 1;
+        //write the cell's direction in the flow direction raster
+        flow_direction.pixels[(x + y * input_raster.max_x)] = fd_value;
     }
-    else if (x >= 0 and x<= nXSize and y >= 0 and y <= nYSize and flow_direction(x,y) == -1){
-        flow_direction(x, y) = scenario;
+    else if (( x >= 0 and x< nXSize and y >= 0 and y < nYSize and flow_direction(x,y) == 0 and  input_raster.is_in_lists[x + y * input_raster.max_x] == -1)){
+        flow_direction.pixels[(x + y * input_raster.max_x)] = fd_value;
+        input_raster.is_in_lists[(x + y * input_raster.max_x)] = 1;
     }
+
 }
 
-int main(int argc, const char * argv[]) {
-  // Open dataset
-  GDALDataset  *input_dataset;
-  GDALAllRegister();
-  input_dataset = (GDALDataset *)GDALOpen("N32W065.hgt", GA_ReadOnly);
-  if (input_dataset == NULL) {
-    std::cerr << "Couldn't open file" << std::endl;
-    return 1;
-  }
+int main(int argc, const char* argv[]) {
 
-  // Print dataset info
-  double geo_transform[6];
-  std::cout << "Driver: " << input_dataset->GetDriver()->GetDescription() << "/" << input_dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME) << std::endl;;
-  std::cout << "Size is " << input_dataset->GetRasterXSize() << "x" << input_dataset->GetRasterYSize() << "x" << input_dataset->GetRasterCount() << std::endl;
-  if (input_dataset->GetProjectionRef() != NULL) std::cout << "Projection is '" << input_dataset->GetProjectionRef() << "'" << std::endl;
-  if (input_dataset->GetGeoTransform(geo_transform) == CE_None) {
-    std::cout << "Origin = (" << geo_transform[0] << ", " << geo_transform[3] << ")" << std::endl;
-    std::cout << "Pixel Size = (" << geo_transform[1] << ", " << geo_transform[5] << ")" << std::endl;
-  }
-
-  // Print Band 1 info
-  GDALRasterBand *input_band;
-  int nBlockXSize, nBlockYSize;
-  int bGotMin, bGotMax;
-  double adfMinMax[2];
-  input_band = input_dataset->GetRasterBand(1);
-  input_band->GetBlockSize(&nBlockXSize, &nBlockYSize);
-  std::cout << "Band 1 Block=" << nBlockXSize << "x" << nBlockYSize << " Type=" << GDALGetDataTypeName(input_band->GetRasterDataType()) << " ColorInterp=" << GDALGetColorInterpretationName(input_band->GetColorInterpretation()) << std::endl;
-  adfMinMax[0] = input_band->GetMinimum(&bGotMin);
-  adfMinMax[1] = input_band->GetMaximum(&bGotMax);
-  if (!(bGotMin && bGotMax)) GDALComputeRasterMinMax((GDALRasterBandH)input_band, TRUE, adfMinMax);
-  std::cout << "Min=" << adfMinMax[0] << " Max=" << adfMinMax[1] << std::endl;
-
-  // Read Band 1 line by line
-  int nXSize = input_band->GetXSize();
-  int nYSize = input_band->GetYSize();
-  Raster input_raster(nXSize, nYSize);
-  for (int current_scanline = 0; current_scanline < nYSize; ++current_scanline) {
-    int *scanline = (int *)CPLMalloc(sizeof(float)*nXSize);
-    if (input_band->RasterIO(GF_Read, 0, current_scanline, nXSize, 1,
-                         scanline, nXSize, 1, GDT_Int32,
-                         0, 0) != CPLE_None) {
-      std::cerr << "Couldn't read scanline " << current_scanline << std::endl;
-      return 1;
-    } input_raster.add_scanline(scanline);
-    CPLFree(scanline);
-  } std::cout << "Created raster: " << input_raster.max_x << "x" << input_raster.pixels.size()/input_raster.max_y << " = " << input_raster.pixels.size() << std::endl;
-  
-  // Flow direction
-  Raster flow_direction(input_raster.max_x, input_raster.max_y);
-    flow_direction.fill();
-    std::priority_queue<RasterCell, std::deque<RasterCell>> priority_queue;
-    for (int x=0; x < nXSize -1 ; x++){
-        for (int y=0; y < nYSize -1 ; y++){
-            if (x == 0 || x == nXSize - 1|| y == 0 || y == nYSize - 1){
-                auto priority_cell = RasterCell(x, y, input_raster(x,y), insertion_order());
-                priority_queue.push(priority_cell);
-                flow_direction(x, y) = -1;
-            }
-        }
-
+    // Open dataset
+    GDALDataset  *input_dataset;
+    GDALAllRegister();
+    input_dataset = (GDALDataset *)GDALOpen("N32W065.hgt", GA_ReadOnly);
+    if (input_dataset == NULL) {
+        std::cerr << "Couldn't open file" << std::endl;
+        return 1;
     }
-    for (; !priority_queue.empty(); priority_queue.pop()){
-        RasterCell c = priority_queue.top();
-            int x_1 = c.x +1; int y_1 = c.y; int scenario_1 = 20;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_1, nXSize, nYSize);
-            int x_2 = c.x +1; int y_2 = c.y-1; int scenario_2 = 15;
-            process_points(x_2, y_2, priority_queue, input_raster, flow_direction, scenario_2, nXSize, nYSize);
-            int x_3 = c.x; int y_3 = c.y-1; int scenario_3 = 10;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_3, nXSize, nYSize);
-            int x_4 = c.x -1; int y_4 = c.y-1; int scenario_4 = 5;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_4, nXSize, nYSize);
-            int x_5 = c.x -1; int y_5 = c.y; int scenario_5 = 40;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_5, nXSize, nYSize);
-            int x_6 = c.x +1; int y_6 = c.y-1; int scenario_6 = 35;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_6, nXSize, nYSize);
-            int x_7 = c.x; int y_7 = c.y+1; int scenario_7 = 30;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_7, nXSize, nYSize);
-            int x_8 = c.x +1; int y_8 = c.y+1; int scenario_8 = 25;
-            process_points(x_1, y_1, priority_queue, input_raster, flow_direction, scenario_8, nXSize, nYSize);
-        }
 
+    // Print dataset info
+    double geo_transform[6];
+    std::cout << "Driver: " << input_dataset->GetDriver()->GetDescription() << "/" << input_dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME) << std::endl;;
+    std::cout << "Size is " << input_dataset->GetRasterXSize() << "x" << input_dataset->GetRasterYSize() << "x" << input_dataset->GetRasterCount() << std::endl;
+    if (input_dataset->GetProjectionRef() != NULL) std::cout << "Projection is '" << input_dataset->GetProjectionRef() << "'" << std::endl;
+    if (input_dataset->GetGeoTransform(geo_transform) == CE_None) {
+        std::cout << "Origin = (" << geo_transform[0] << ", " << geo_transform[3] << ")" << std::endl;
+        std::cout << "Pixel Size = (" << geo_transform[1] << ", " << geo_transform[5] << ")" << std::endl;
+    }
 
-//   Write flow direction
-    std::string tiffname("test.tif");
-     // set the name and path of the flow_direction file
-    GDALDriver* driverGeotiff(GetGDALDriverManager()->GetDriverByName("GTiff"));
-    GDALDataset* geotiffDataset(driverGeotiff->Create(tiffname.c_str(), nXSize, nYSize, 1, GDT_Int32, NULL));
+    // Print Band 1 info
+    GDALRasterBand* input_band;
+    int nBlockXSize, nBlockYSize;
+    int bGotMin, bGotMax;
+    double adfMinMax[2];
+    input_band = input_dataset->GetRasterBand(1);
+    input_band->GetBlockSize(&nBlockXSize, &nBlockYSize);
+    std::cout << "Band 1 Block=" << nBlockXSize << "x" << nBlockYSize << " Type=" << GDALGetDataTypeName(input_band->GetRasterDataType()) << " ColorInterp=" << GDALGetColorInterpretationName(input_band->GetColorInterpretation()) << std::endl;
+    adfMinMax[0] = input_band->GetMinimum(&bGotMin);
+    adfMinMax[1] = input_band->GetMaximum(&bGotMax);
+    if (!(bGotMin && bGotMax)) GDALComputeRasterMinMax((GDALRasterBandH)input_band, TRUE, adfMinMax);
+    std::cout << "Min=" << adfMinMax[0] << " Max=" << adfMinMax[1] << std::endl;
+    // Read Band 1 line by line
+    int nXSize = input_band->GetXSize();
+    int nYSize = input_band->GetYSize();
+    Raster input_raster(nXSize, nYSize);
+    for (int current_scanline = 0; current_scanline < nYSize; ++current_scanline) {
+        int* scanline = (int*)CPLMalloc(sizeof(float) * nXSize);
+        if (input_band->RasterIO(GF_Read, 0, current_scanline, nXSize, 1,
+                                 scanline, nXSize, 1, GDT_Int32,
+                                 0, 0) != CPLE_None) {
+            std::cerr << "Couldn't read scanline " << current_scanline << std::endl;
+            return 1;
+        } input_raster.add_scanline(scanline);
+        CPLFree(scanline);
+    } std::cout << "Created raster: " << input_raster.max_x << "x" << input_raster.pixels.size() / input_raster.max_y << " = " << input_raster.pixels.size() << std::endl;
 
+    input_raster.fillmarkers();
+    // Flow direction
+    Raster flow_direction(input_raster.max_x, input_raster.max_y);
+    flow_direction.fill();
+    std::priority_queue<RasterCell, std::deque<RasterCell>> cells_to_process_flow;
+
+    // Write flow direction
+    //push boundary cells into priority queue (initial priority queue)
+    for (int i = 0; i < input_raster.max_x; i++)
+    {
+        for (int j = 0; j < input_raster.max_y; j++)
+        {
+            if (i == 0 || j == 0 || i == input_raster.max_x - 1 || j == input_raster.max_y - 1)
+            {
+                RasterCell c(i, j, input_raster(i, j), insert_order++);
+                cells_to_process_flow.push(c);
+                input_raster.is_in_lists[i + j * input_raster.max_x] = -1;
+            }
+        };
+    };
+    //now we have our initial priority queue, we begin to process it
+    for (; !cells_to_process_flow.empty(); cells_to_process_flow.pop())
+    {
+        RasterCell c = cells_to_process_flow.top();
+        input_raster.is_processed[c.x * input_raster.max_x + c.y] = 1;
+        //get its neighbours
+        //if they are four corners
+            neighbour_processing(input_raster, c.x - 1, c.y - 1, flow_direction, 25, cells_to_process_flow, nXSize, nYSize); //1
+            neighbour_processing(input_raster, c.x, c.y - 1, flow_direction, 20, cells_to_process_flow, nXSize, nYSize);//2
+            neighbour_processing(input_raster, c.x + 1, c.y - 1, flow_direction, 35, cells_to_process_flow, nXSize, nYSize);//3
+            neighbour_processing(input_raster, c.x - 1, c.y, flow_direction, 30, cells_to_process_flow, nXSize, nYSize); //4
+            neighbour_processing(input_raster, c.x + 1, c.y, flow_direction, 40, cells_to_process_flow, nXSize, nYSize); //5
+            neighbour_processing(input_raster, c.x - 1, c.y + 1, flow_direction, 15, cells_to_process_flow, nXSize, nYSize); //6
+            neighbour_processing(input_raster, c.x, c.y + 1, flow_direction, 10, cells_to_process_flow, nXSize, nYSize); //7
+            neighbour_processing(input_raster, c.x + 1, c.y + 1, flow_direction, 5, cells_to_process_flow, nXSize, nYSize); //8+
+    }
+
+    GDALDataset* geotiffDataset;
+    GDALDriver* driverGeotiff;
+    GDALRasterBand* geotiffBand;
+    input_dataset->GetGeoTransform(geo_transform);
+    std::string extension(".tif"), tiffname;
+    tiffname = (std::string)"flow_direction_1" + extension;
+    driverGeotiff = GetGDALDriverManager()->GetDriverByName("GTiff");
+    geotiffDataset = driverGeotiff->Create(tiffname.c_str(), nXSize, nYSize, 1, GDT_Float32, NULL);
     geotiffDataset->SetGeoTransform(geo_transform);
     geotiffDataset->SetProjection(input_dataset->GetProjectionRef());
-
-    auto* output_line((unsigned int*)CPLMalloc(sizeof(unsigned int)* nXSize));
-
-    for (int current_scanline = 0; current_scanline != nYSize; ++current_scanline)
+    int* rowBuff = (int*)CPLMalloc(sizeof(float) * nXSize);
+    for (int row = 0; row < nYSize; row++)
     {
-        input_raster.output_direction(current_scanline, output_line); // similar to add_scanline line[i] = direction/accumulation of each cell
-
-        if (geotiffDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, current_scanline, nXSize, 1,
-                                                       output_line, nXSize, 1, GDT_UInt32, 0, 0) != CPLE_None) // write the values into the raster file
+        for (int col = 0; col < nXSize; col++)
         {
-            std::cerr << "Couldn't load output_line " << current_scanline << '\n';
-            return 1;
+            rowBuff[col] =flow_direction(col, row);
         }
-
+        geotiffDataset->GetRasterBand(1)->RasterIO(GF_Write, 0,row, nXSize, 1, rowBuff, nXSize, 1, GDT_Int32, 0, 0);
     }
+    GDALClose(input_dataset);
+    GDALClose(geotiffDataset);
+    GDALDestroyDriverManager();
+    // Flow accumulation
+    Raster flow_accumulation(input_raster.max_x, input_raster.max_y);
+    // to do
 
-    CPLFree(output_line);
+    // Write flow accumulation
+    // to do
 
-  // to do
-  
-  // Flow accumulation
-//  Raster flow_accumulation(input_raster.max_x, input_raster.max_y);
-  // to do
-  
-  // Write flow accumulation
-  // to do
+    // Close input dataset
 
-  // Close input dataset
-  GDALClose(input_dataset);
-
-  return 0;
+    return 0;
 }
