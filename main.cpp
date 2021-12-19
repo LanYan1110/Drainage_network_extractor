@@ -16,7 +16,7 @@ struct Raster {
     Raster(int x, int y) {
         max_x = x;
         max_y = y;
-        int total_pixels = x * y;
+        unsigned int total_pixels = x * y;
         pixels.reserve(total_pixels);
     }
 
@@ -57,7 +57,7 @@ struct RasterCell {
     unsigned int elevation;
     int insertion_order;
     // Defines a new link to a cell
-    RasterCell(int x, int y, int elevation, int insertion_order) {
+    RasterCell(int x, int y, unsigned int elevation, int insertion_order) {
         this->x = x;
         this->y = y;
         this->elevation = elevation;
@@ -66,17 +66,18 @@ struct RasterCell {
     // Define the order of the linked cells (to be used in a priority_queue)
     bool operator<(const RasterCell& other) const {
         // to do with statements like if (this->elevation > other.elevation) return false/true;
-        if (this->elevation < other.elevation)
-            return false;
-        else if (this->elevation > other.elevation)
+        if (this->elevation > other.elevation) {
             return true;
-        else if (this->elevation == other.elevation)
-        {
+        }
+        else if (this->elevation == other.elevation){
             //(grid cells added earlier have higher precedence in case of equal elevation)
             if (this->insertion_order < other.insertion_order)
                 return false;
             else
                 return true;
+        }
+        else {
+            return false;
         }
     }
 };
@@ -107,7 +108,7 @@ int main(int argc, const char* argv[]) {
     // Open dataset
     GDALDataset* input_dataset;
     GDALAllRegister();
-    input_dataset = (GDALDataset *)GDALOpen("S33W070.hgt", GA_ReadOnly);
+    input_dataset = (GDALDataset *)GDALOpen("N74E018.hgt", GA_ReadOnly);
     if (input_dataset == NULL)
     {
         std::cerr << "Couldn't open file" << std::endl;
@@ -169,62 +170,106 @@ int main(int argc, const char* argv[]) {
                 cells_to_process_flow.push(c);
                 flow_direction(i, j) = -1;
             }
-        };
-    };
+        }
+    }
 
     //now we have our initial priority queue, we begin to process it
     for (; !cells_to_process_flow.empty(); cells_to_process_flow.pop())
     {
         RasterCell c = cells_to_process_flow.top();
         accumulation_stack.push(c);
-        //if they are four corners
-        neighbour_processing(input_raster, c.x - 1, c.y - 1, flow_direction, 25, cells_to_process_flow, nXSize, nYSize); //1
+        neighbour_processing(input_raster, c.x + 1, c.y - 1, flow_direction, 25, cells_to_process_flow, nXSize, nYSize); //1
         neighbour_processing(input_raster, c.x, c.y - 1, flow_direction, 30, cells_to_process_flow, nXSize, nYSize);//2
-        neighbour_processing(input_raster, c.x + 1, c.y - 1, flow_direction, 35, cells_to_process_flow, nXSize, nYSize);//3
-        neighbour_processing(input_raster, c.x - 1, c.y, flow_direction, 20, cells_to_process_flow, nXSize, nYSize); //4
-        neighbour_processing(input_raster, c.x + 1, c.y, flow_direction, 40, cells_to_process_flow, nXSize, nYSize); //5
-        neighbour_processing(input_raster, c.x - 1, c.y + 1, flow_direction, 15, cells_to_process_flow, nXSize, nYSize); //6
+        neighbour_processing(input_raster, c.x - 1, c.y - 1, flow_direction, 35, cells_to_process_flow, nXSize, nYSize);//3
+        neighbour_processing(input_raster, c.x + 1, c.y, flow_direction, 20, cells_to_process_flow, nXSize, nYSize); //4
+        neighbour_processing(input_raster, c.x - 1, c.y, flow_direction, 40, cells_to_process_flow, nXSize, nYSize); //5
+        neighbour_processing(input_raster, c.x + 1, c.y + 1, flow_direction, 15, cells_to_process_flow, nXSize, nYSize); //6
         neighbour_processing(input_raster, c.x, c.y + 1, flow_direction, 10, cells_to_process_flow, nXSize, nYSize); //7
-        neighbour_processing(input_raster, c.x + 1, c.y + 1, flow_direction, 5, cells_to_process_flow, nXSize, nYSize); //8+
+        neighbour_processing(input_raster, c.x - 1, c.y + 1, flow_direction, 5, cells_to_process_flow, nXSize, nYSize); //8+
     }
 
     //flow accumulation
     Raster flow_accumulation(input_raster.max_x, input_raster.max_y);
-    flow_accumulation.fill_1();
+    flow_accumulation.fill();
     for (; !accumulation_stack.empty(); accumulation_stack.pop())
     {
         RasterCell c = accumulation_stack.top();
         //get its neighbours
-        unsigned int value = flow_direction(c.x, c.y);
-        switch (value){
-            case(5):{
-                flow_accumulation(c.x -1, c.y -1) += flow_accumulation(c.x, c.y);   break;
-            }
-            case(10):{
-                flow_accumulation(c.x, c.y -1) += flow_accumulation(c.x, c.y);  break;
-            }
-            case(15):{
-                flow_accumulation(c.x +1, c.y-1) += flow_accumulation(c.x, c.y);    break;
-            }
-            case(40):{
-                flow_accumulation(c.x-1, c.y) += flow_accumulation(c.x, c.y);   break;
-            }
-            case(20):{
-                flow_accumulation(c.x +1, c.y) += flow_accumulation(c.x, c.y);      break;
-            }
-            case(35):{
-                flow_accumulation(c.x -1, c.y +1) += flow_accumulation(c.x, c.y);   break;
-            }
-            case(30):{
-                flow_accumulation(c.x , c.y +1) += flow_accumulation(c.x, c.y);     break;
-            }
-            case(25):{
-                flow_accumulation(c.x +1, c.y+1) += flow_accumulation(c.x, c.y);    break;
-            }
-            default:{   break;
-            }
-        }
+
+        if (flow_direction(c.x, c.y) == 25) {
+            flow_accumulation(c.x - 1, c.y + 1) = flow_accumulation(c.x - 1, c.y + 1) + flow_accumulation(c.x, c.y) +1;}
+        if (flow_direction(c.x, c.y) == 30){
+            flow_accumulation(c.x, c.y + 1) = flow_accumulation(c.x, c.y +1) + flow_accumulation(c.x, c.y) +1;}
+        if ( flow_direction(c.x, c.y) == 35){
+            flow_accumulation(c.x + 1, c.y + 1) =  flow_accumulation(c.x + 1, c.y + 1) + flow_accumulation(c.x, c.y) +1;}
+        if (flow_direction(c.x, c.y) == 20){
+            flow_accumulation(c.x - 1, c.y) = flow_accumulation(c.x - 1, c.y) + flow_accumulation(c.x, c.y) +1;}
+        if (flow_direction(c.x, c.y) == 40){
+            flow_accumulation(c.x + 1, c.y) = flow_accumulation(c.x + 1, c.y) + flow_accumulation(c.x, c.y) +1;}
+        if (flow_direction(c.x, c.y) == 15){
+            flow_accumulation(c.x - 1, c.y - 1) = flow_accumulation(c.x - 1, c.y - 1) + flow_accumulation(c.x, c.y) +1;}
+        if (flow_direction(c.x, c.y) == 10){
+            flow_accumulation(c.x, c.y - 1) = flow_accumulation(c.x, c.y - 1) + flow_accumulation(c.x, c.y) +1;}
+        if (flow_direction(c.x, c.y) == 5){
+            flow_accumulation(c.x + 1, c.y - 1) = flow_accumulation(c.x + 1, c.y - 1) + flow_accumulation(c.x, c.y) +1;}
+
     }
+
+//        unsigned int value = flow_direction(c.x, c.y);
+//        unsigned int add = flow_accumulation(c.x, c.y) +1;
+//        switch (value){
+//            case(5):{
+//                auto flow_old = flow_accumulation(c.x -1, c.y -1);
+//                flow_accumulation(c.x -1, c.y -1) = flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x -1, c.y -1) << " case =5"<< std::endl;
+//                break;
+//            }
+//            case(10):{
+//                auto flow_old = flow_accumulation(c.x, c.y -1);
+//                flow_accumulation(c.x, c.y -1) = flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x, c.y -1) << " case =10"<< std::endl;
+//                break;
+//            }
+//            case(15):{
+//                auto flow_old = flow_accumulation(c.x +1, c.y-1);
+//                flow_accumulation(c.x +1, c.y-1) =  flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x +1, c.y-1) << " case =15"<< std::endl;
+//                break;
+//            }
+//            case(40):{
+//                auto flow_old = flow_accumulation(c.x - 1, c.y);
+//                flow_accumulation(c.x - 1, c.y) =  flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x - 1, c.y) << " case =40"<< std::endl;
+//                break;
+//            }
+//            case(20):{
+//                auto flow_old = flow_accumulation(c.x +1, c.y);
+//                flow_accumulation(c.x +1, c.y)  = flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x +1, c.y) << " case =20"<< std::endl;
+//                break;
+//            }
+//            case(35):{
+//                auto flow_old = flow_accumulation(c.x -1, c.y +1);
+//                flow_accumulation(c.x -1, c.y +1) = flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x -1, c.y +1) << " case =35"<< std::endl;
+//                break;
+//            }
+//            case(30):{
+//                auto flow_old = flow_accumulation(c.x , c.y +1);
+//                flow_accumulation(c.x , c.y +1) = flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x , c.y +1) << " case =30"<< std::endl;
+//                break;
+//            }
+//            case(25):{
+//                auto flow_old = flow_accumulation(c.x +1, c.y+1);
+//                flow_accumulation(c.x +1, c.y+1) = flow_old + add;
+//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x +1, c.y+1) << " case =25"<< std::endl;
+//                break;
+//            }
+//            default:{   break;
+//            }
+//        }
+//    }
 
     GDALDataset* geotiffDataset;
     GDALDataset* geotiffDataset_2;
