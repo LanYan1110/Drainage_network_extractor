@@ -76,9 +76,9 @@ struct RasterCell {
             else
                 return true;
         }
-        else {
+        else{
             return false;
-        }
+            }
     }
 };
 
@@ -214,62 +214,6 @@ int main(int argc, const char* argv[]) {
             flow_accumulation(c.x + 1, c.y - 1) = flow_accumulation(c.x + 1, c.y - 1) + flow_accumulation(c.x, c.y) +1;}
 
     }
-
-//        unsigned int value = flow_direction(c.x, c.y);
-//        unsigned int add = flow_accumulation(c.x, c.y) +1;
-//        switch (value){
-//            case(5):{
-//                auto flow_old = flow_accumulation(c.x -1, c.y -1);
-//                flow_accumulation(c.x -1, c.y -1) = flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x -1, c.y -1) << " case =5"<< std::endl;
-//                break;
-//            }
-//            case(10):{
-//                auto flow_old = flow_accumulation(c.x, c.y -1);
-//                flow_accumulation(c.x, c.y -1) = flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x, c.y -1) << " case =10"<< std::endl;
-//                break;
-//            }
-//            case(15):{
-//                auto flow_old = flow_accumulation(c.x +1, c.y-1);
-//                flow_accumulation(c.x +1, c.y-1) =  flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x +1, c.y-1) << " case =15"<< std::endl;
-//                break;
-//            }
-//            case(40):{
-//                auto flow_old = flow_accumulation(c.x - 1, c.y);
-//                flow_accumulation(c.x - 1, c.y) =  flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x - 1, c.y) << " case =40"<< std::endl;
-//                break;
-//            }
-//            case(20):{
-//                auto flow_old = flow_accumulation(c.x +1, c.y);
-//                flow_accumulation(c.x +1, c.y)  = flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x +1, c.y) << " case =20"<< std::endl;
-//                break;
-//            }
-//            case(35):{
-//                auto flow_old = flow_accumulation(c.x -1, c.y +1);
-//                flow_accumulation(c.x -1, c.y +1) = flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x -1, c.y +1) << " case =35"<< std::endl;
-//                break;
-//            }
-//            case(30):{
-//                auto flow_old = flow_accumulation(c.x , c.y +1);
-//                flow_accumulation(c.x , c.y +1) = flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x , c.y +1) << " case =30"<< std::endl;
-//                break;
-//            }
-//            case(25):{
-//                auto flow_old = flow_accumulation(c.x +1, c.y+1);
-//                flow_accumulation(c.x +1, c.y+1) = flow_old + add;
-//                std::cout << "old value  " << flow_old << " addition = " << add << " new_flow: "<< flow_accumulation(c.x +1, c.y+1) << " case =25"<< std::endl;
-//                break;
-//            }
-//            default:{   break;
-//            }
-//        }
-//    }
 
     GDALDataset* geotiffDataset;
     GDALDataset* geotiffDataset_2;
